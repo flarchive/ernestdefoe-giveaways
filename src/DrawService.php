@@ -1,0 +1,176 @@
+<?php
+
+namespace ErnestDefoe\Giveaways;
+
+use Carbon\Carbon;
+use ErnestDefoe\Giveaways\Notification\GiveawayWonBlueprint;
+use Flarum\Notification\NotificationSyncer;
+use Flarum\User\User;
+
+/**
+ * Provably-fair winner selection. At draw time we publish:
+ *   - draw_seed     (random, generated now)
+ *   - entrant_hash  (sha256 of the canonical "user_id:entries" list, sorted)
+ * Anyone holding the entrant list can re-run pick() with the seed and verify
+ * the winners — the draw can't be rigged after the fact.
+ */
+class DrawService
+{
+    public function __construct(protected NotificationSyncer $notifications)
+    {
+    }
+
+    public function draw(Giveaway $giveaway): void
+    {
+        // Claim the draw atomically. The scheduled run and a manager's "Draw now"
+        // (or a double click) can arrive together; each used to see "active" on
+        // its own copy of the row and draw, giving two seeds and two sets of
+        // winners. Locking the row and re-reading the status inside one
+        // transaction lets exactly one of them through.
+        $winnerIds = $giveaway->getConnection()->transaction(function () use ($giveaway) {
+            $locked = Giveaway::query()->whereKey($giveaway->id)->lockForUpdate()->first();
+            if (! $locked || $locked->status !== 'active') {
+                return null;
+            }
+
+            $entries = $locked->entries()->orderBy('user_id')->get(['user_id', 'entries']);
+
+            $canonical = $entries->map(fn ($e) => $e->user_id . ':' . $e->entries)->implode(',');
+            $hash = hash('sha256', $canonical);
+            $seed = bin2hex(random_bytes(16));
+
+            $pool = $entries->map(fn ($e) => ['user_id' => (int) $e->user_id, 'entries' => max(1, (int) $e->entries)])->values()->all();
+            $winnerIds = $this->pick($pool, $seed, (int) $locked->winner_count);
+
+            foreach ($winnerIds as $pos => $uid) {
+                $w = new GiveawayWinner();
+                $w->giveaway_id = $locked->id;
+                $w->user_id = $uid;
+                $w->position = $pos + 1;
+                $w->created_at = Carbon::now();
+                $w->save();
+            }
+
+            $locked->status = 'drawn';
+            $locked->draw_seed = $seed;
+            $locked->entrant_hash = $hash;
+            $locked->drawn_at = Carbon::now();
+            $locked->save();
+
+            return $winnerIds;
+        });
+
+        if ($winnerIds === null) {
+            return; // already drawn (or cancelled) by someone else
+        }
+
+        $giveaway->refresh();
+        $this->notifyWinners($giveaway, $winnerIds);
+    }
+
+    /**
+     * Replace a forfeited winner, deterministically and verifiably.
+     *
+     * The replacement is NOT a fresh random pick — that would break the
+     * published proof. pick() eliminates each chosen entrant as it goes, so
+     * asking it for (winner_count + forfeits) winners simply continues the same
+     * seeded sequence; the extra id at the end is the one the draw would have
+     * revealed next. A verifier holding the seed and entrant list can
+     * reproduce it exactly, and confirm the prize moved on the seed rather
+     * than on the operator's say-so.
+     *
+     * Returns the new winner row, or null if the entrant pool is exhausted.
+     */
+    public function drawReplacement(Giveaway $giveaway, GiveawayWinner $forfeited): ?GiveawayWinner
+    {
+        if (! $giveaway->draw_seed) {
+            return null;
+        }
+
+        $entries = $giveaway->entries()->orderBy('user_id')->get(['user_id', 'entries']);
+        $pool = $entries->map(fn ($e) => ['user_id' => (int) $e->user_id, 'entries' => max(1, (int) $e->entries)])->values()->all();
+
+        $forfeits = $giveaway->winners()->whereNotNull('forfeited_at')->count();
+        $sequence = $this->pick($pool, $giveaway->draw_seed, (int) $giveaway->winner_count + $forfeits);
+
+        // Everyone already on the board — current winners and forfeited alike —
+        // is spent. The first id in the sequence that is neither is the
+        // replacement.
+        $taken = $giveaway->winners()->pluck('user_id')->map(fn ($id) => (int) $id)->all();
+        $replacementId = null;
+        foreach ($sequence as $uid) {
+            if (! in_array((int) $uid, $taken, true)) {
+                $replacementId = (int) $uid;
+                break;
+            }
+        }
+        if ($replacementId === null) {
+            return null; // no entrants left to promote
+        }
+
+        $w = new GiveawayWinner();
+        $w->giveaway_id = $giveaway->id;
+        $w->user_id = $replacementId;
+        $w->position = (int) $forfeited->position; // takes the forfeited slot
+        $w->created_at = Carbon::now();
+        $w->save();
+
+        $this->notifyWinners($giveaway, [$replacementId], (int) $forfeited->position);
+
+        return $w;
+    }
+
+    /** Send each winner a "you won" alert. Failures here never block the draw. */
+    protected function notifyWinners(Giveaway $giveaway, array $winnerIds, ?int $position = null): void
+    {
+        foreach ($winnerIds as $pos => $uid) {
+            try {
+                $user = User::find($uid);
+                if ($user) {
+                    $this->notifications->sync(
+                        new GiveawayWonBlueprint($giveaway, $position ?? $pos + 1),
+                        [$user]
+                    );
+                }
+            } catch (\Throwable $e) {
+                // Best-effort: a notification failure must not undo a completed draw.
+            }
+        }
+    }
+
+    /**
+     * Deterministic weighted pick of N distinct winners from a [user_id,entries]
+     * pool, seeded by $seed. Pure function of (pool, seed) → verifiable.
+     *
+     * @param array<int, array{user_id:int, entries:int}> $pool
+     * @return int[] winner user ids in draw order
+     */
+    public function pick(array $pool, string $seed, int $count): array
+    {
+        $winners = [];
+        $slots = min($count, count($pool));
+
+        for ($i = 0; $i < $slots; $i++) {
+            $total = array_sum(array_column($pool, 'entries'));
+            if ($total <= 0) {
+                break;
+            }
+            // 60 bits of the per-slot hash → fits a 64-bit int → uniform-ish mod total.
+            $r = hexdec(substr(hash('sha256', $seed . ':' . $i), 0, 15)) % $total;
+
+            $acc = 0;
+            $pickIdx = count($pool) - 1;
+            foreach ($pool as $idx => $row) {
+                $acc += $row['entries'];
+                if ($r < $acc) {
+                    $pickIdx = $idx;
+                    break;
+                }
+            }
+            $winners[] = $pool[$pickIdx]['user_id'];
+            array_splice($pool, $pickIdx, 1);
+        }
+
+        return $winners;
+    }
+}
