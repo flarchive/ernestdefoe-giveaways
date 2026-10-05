@@ -2,24 +2,13 @@
 
 > **Read-only archive of released versions of ernestdefoe/giveaways.** Not for installation: use [Packagist](https://packagist.org/packages/ernestdefoe/giveaways) or the [upstream repository](https://github.com/ernestdefoe/giveaways).
 
-**11** versions archived · Latest: [`v0.5.0`](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.5.0) · License: `MIT` · Flarum: `^2.0`
+**0** versions archived · Latest: [`v0.5.1`](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.5.1) · License: `MIT` · Flarum: `^2.0`
 
 ## Archived Versions
 
 | Version | Released | Flarum | Source |
 |---|---|---|---|
-| `v0.1.0` | 2026-06-06 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.1.0) |
-| `v0.1.1` | 2026-06-06 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.1.1) |
-| `v0.1.2` | 2026-06-06 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.1.2) |
-| `v0.2.0` | 2026-06-06 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.2.0) |
-| `v0.2.1` | 2026-06-08 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.2.1) |
-| `v0.2.2` | 2026-08-15 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.2.2) |
-| `v0.2.3` | 2026-09-13 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.2.3) |
-| `v0.2.4` | 2026-09-18 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.2.4) |
-| `v0.3.0` | 2026-09-18 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.3.0) |
-| `v0.4.0` | 2026-09-19 | `^2.0` | [Browse](https://github.com/flarchive/ernestdefoe-giveaways/tree/archive/v0.4.0) |
-
-[View all 11 versions](https://github.com/flarchive/ernestdefoe-giveaways/tags)
+| — | — | — | — |
 
 Catalog entry: [packages/ernestdefoe-giveaways.json](https://github.com/flarchive/archive-index/blob/main/packages/ernestdefoe-giveaways.json)
 
